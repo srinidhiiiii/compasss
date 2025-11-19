@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Geometric Compass</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+            touch-action: none;
+            background-color: #f8fafc;
+        }
+
+        /* Container for stacking canvases */
+        #canvas-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        #ink-layer {
+            z-index: 1;
+        }
+
+        #tool-layer {
+            z-index: 2;
+            cursor: default;
+        }
+
+        /* Custom Cursors */
+        .cursor-move {
+            cursor: move !important;
+        }
+
+        .cursor-draw {
+            cursor: none !important;
+            /* Hide cursor when drawing to see pencil tip */
+        }
+
+        .cursor-resize {
+            cursor: ew-resize !important;
+        }
+
+        .cursor-pointer {
+            cursor: pointer !important;
+        }
+
+        .tool-btn {
+            transition: all 0.2s;
+        }
+
+        .tool-btn:active {
+            transform: scale(0.95);
+        }
+
+        .color-swatch {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+
+        .color-swatch:hover {
+            transform: scale(1.1);
+        }
+
+        .color-swatch.active {
+            transform: scale(1.2);
+            box-shadow: 0 0 0 2px #3b82f6, 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- UI Toolbar -->
+    <div class="absolute top-4 left-4 flex flex-col gap-4 z-50">
+        <div
+            class="bg-white/95 backdrop-blur shadow-xl rounded-2xl p-4 border border-slate-100 flex flex-col gap-4 w-16 items-center">
+
+            <!-- Color Picker -->
+            <div class="flex flex-col gap-3 items-center">
+                <div class="color-swatch bg-slate-700 active" onclick="setPenColor(this, '#334155')"></div>
+                <div class="color-swatch bg-rose-500" onclick="setPenColor(this, '#f43f5e')"></div>
+                <div class="color-swatch bg-blue-500" onclick="setPenColor(this, '#3b82f6')"></div>
+                <div class="color-swatch bg-emerald-500" onclick="setPenColor(this, '#10b981')"></div>
+            </div>
+
+            <div class="w-8 h-px bg-slate-200"></div>
+
+            <!-- Actions -->
+            <button onclick="clearCanvas()" class="tool-btn p-2 rounded-xl hover:bg-slate-100 text-slate-600"
+                title="Clear Canvas">
+                <i data-lucide="trash-2" class="w-6 h-6"></i>
+            </button>
+            <button onclick="resetCompass()" class="tool-btn p-2 rounded-xl hover:bg-slate-100 text-slate-600"
+                title="Reset Compass">
+                <i data-lucide="rotate-ccw" class="w-6 h-6"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Instructions -->
+    <div id="instructions"
+        class="absolute bottom-8 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur shadow-lg border border-slate-200 text-slate-600 px-6 py-3 rounded-full text-sm font-medium pointer-events-none transition-opacity duration-500 z-50 flex items-center gap-3 whitespace-nowrap">
+        <span class="flex items-center gap-1"><i data-lucide="move" class="w-4 h-4"></i> Move</span>
+        <span class="w-px h-4 bg-slate-300"></span>
+        <span class="flex items-center gap-1"><i data-lucide="arrow-left-right" class="w-4 h-4"></i> Resize</span>
+        <span class="w-px h-4 bg-slate-300"></span>
+        <span class="flex items-center gap-1"><i data-lucide="rotate-cw" class="w-4 h-4"></i> Rotate</span>
+        <span class="w-px h-4 bg-slate-300"></span>
+        <span class="flex items-center gap-1"><i data-lucide="pencil" class="w-4 h-4"></i> Draw</span>
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="ink-layer"></canvas>
+        <canvas id="tool-layer"></canvas>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        // --- CONFIGURATION ---
+        const COLORS = {
+            leg: '#cbd5e1',        // Light gray legs
+            hinge: '#334155',      // Dark hinge
+            pencilBody: '#be185d', // Pinkish Red
+            pencilWood: '#f1f5f9', // White/Wood
+            pencilLead: '#be185d', // Red Lead
+            metal: '#94a3b8',      // Metal details
+            shadow: 'rgba(0,0,0,0.15)'
+        };
+
+        const GEOMETRY = {
+            legLength: 240,
+            legWidth: 20,
+            hingeRadius: 18,
+            pivotRadius: 4,
+            pencilWidth: 16,
+            pencilHeight: 60,
+            pencilHitRadius: 20, // Tip
+            pencilBodyHitRadius: 30, // Body
+            moveHitRadius: 40
+        };
+
+        // --- STATE ---
+        const inkCanvas = document.getElementById('ink-layer');
+        const toolCanvas = document.getElementById('tool-layer');
+        const inkCtx = inkCanvas.getContext('2d');
+        const toolCtx = toolCanvas.getContext('2d');
+
+        let width, height, dpr;
+
+        const compass = {
+            x: 0,
+            y: 0,
+            radius: 150,
+            angle: -Math.PI / 2, // Start Upright
+            penColor: '#be185d', // Default to the red color
+            isDrawing: false
+        };
+
+        let interaction = {
+            mode: null, // 'MOVE', 'RESIZE', 'DRAW', 'ROTATE'
+            startPos: { x: 0, y: 0 },
+            startCompass: { ...compass },
+            lastDrawAngle: 0
+        };
+
+        // --- INITIALIZATION ---
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            dpr = window.devicePixelRatio || 1;
+
+            [inkCanvas, toolCanvas].forEach(c => {
+                c.width = width * dpr;
+                c.height = height * dpr;
+                c.style.width = `${width}px`;
+                c.style.height = `${height}px`;
+                const ctx = c.getContext('2d');
+                ctx.scale(dpr, dpr);
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+            });
+
+            renderTool();
+        }
+
+        function init() {
+            resize();
+            resetCompass();
+            window.addEventListener('resize', resize);
+            requestAnimationFrame(renderLoop);
+        }
+
+        function resetCompass() {
+            compass.x = width / 2 - 75;
+            compass.y = height / 2;
+            compass.radius = 150;
+            compass.angle = -Math.PI / 2;
+            renderTool();
+        }
+
+        function clearCanvas() {
+            inkCtx.clearRect(0, 0, width, height);
+        }
+
+        // --- GEOMETRY HELPERS ---
+
+        function getCompassPoints() {
+            const needleTip = { x: compass.x, y: compass.y };
+            const pencilTip = {
+                x: compass.x + compass.radius * Math.cos(compass.angle),
+                y: compass.y + compass.radius * Math.sin(compass.angle)
+            };
+
+            const halfSpread = compass.radius / 2;
+            const safeHalfSpread = Math.min(halfSpread, GEOMETRY.legLength - 10);
+            const triangleHeight = Math.sqrt(Math.pow(GEOMETRY.legLength, 2) - Math.pow(safeHalfSpread, 2));
+
+            const midX = (needleTip.x + pencilTip.x) / 2;
+            const midY = (needleTip.y + pencilTip.y) / 2;
+            // headAngle is the direction of the "Up" vector of the compass
+            const headAngle = compass.angle - Math.PI / 2;
+
+            const head = {
+                x: midX + triangleHeight * Math.cos(headAngle),
+                y: midY + triangleHeight * Math.sin(headAngle)
+            };
+
+            // Pencil Angle: Straight down relative to the compass head
+            // "Down" is headAngle + PI
+            const pencilAngle = headAngle + Math.PI;
+
+            // Unit vectors for Pencil Frame
+            // pux, puy = Down (along pencil)
+            const pux = Math.cos(pencilAngle);
+            const puy = Math.sin(pencilAngle);
+            // ppx, ppy = Left (towards needle, perpendicular to pencil)
+            // If Down is (0, 1), Left is (-1, 0).
+            // (-puy, pux) ?
+            // Let's check: headAngle = -PI/2 (Up). pencilAngle = PI/2 (Down).
+            // pux=0, puy=1.
+            // We want Left (-1, 0).
+            // -puy = -1. pux = 0. Correct.
+            const ppx = -puy;
+            const ppy = pux;
+
+            // Right Leg Tip (The Joint)
+            // Calculated relative to PencilTip using the Pencil Frame.
+            // The bracket holds the pencil.
+            // We want the leg to end at the bracket's joint.
+
+            const bracketHeight = 60; // Height of bracket from tip (Pencil is held here)
+            const bracketWidth = 28;  // Width of bracket (Joint is this far Left)
+
+            const jointPos = {
+                x: pencilTip.x - pux * bracketHeight + ppx * bracketWidth,
+                y: pencilTip.y - puy * bracketHeight + ppy * bracketWidth
+            };
+
+            // Mid-points for legs
+            const midNeedleLeg = {
+                x: (needleTip.x + head.x) / 2,
+                y: (needleTip.y + head.y) / 2
+            };
+            const midPencilLeg = {
+                x: (jointPos.x + head.x) / 2,
+                y: (jointPos.y + head.y) / 2
+            };
+
+            // Pencil Body Position
+            const pencilBodyPos = {
+                x: pencilTip.x - pux * 40,
+                y: pencilTip.y - puy * 40
+            };
+
+            return { needleTip, pencilTip, head, midNeedleLeg, midPencilLeg, pencilBodyPos, jointPos, headAngle, pencilAngle, bracketHeight, bracketWidth };
+        }
+
+        function dist(p1, p2) {
+            return Math.sqrt((p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2);
+        }
+
+        // --- RENDERING ---
+
+        function renderLoop() {
+            renderTool();
+        }
+
+        function renderTool() {
+            toolCtx.clearRect(0, 0, width, height);
+            const pts = getCompassPoints();
+
+            // Preview Circle
+            if (interaction.mode === 'RESIZE') {
+                toolCtx.beginPath();
+                toolCtx.arc(pts.needleTip.x, pts.needleTip.y, compass.radius, 0, Math.PI * 2);
+                toolCtx.strokeStyle = '#cbd5e1';
+                toolCtx.lineWidth = 2;
+                toolCtx.setLineDash([5, 5]);
+                toolCtx.stroke();
+                toolCtx.setLineDash([]);
+            }
+
+            // --- 1. Needle Leg (Left) ---
+            toolCtx.save();
+
+            // Vector Head -> NeedleTip
+            const ndx = pts.needleTip.x - pts.head.x;
+            const ndy = pts.needleTip.y - pts.head.y;
+            const nlen = Math.sqrt(ndx * ndx + ndy * ndy);
+            const nux = ndx / nlen;
+            const nuy = ndy / nlen;
+
+            // Perpendicular vector (Left)
+            const npx = -nuy;
+            const npy = nux;
+            const w = GEOMETRY.legWidth / 2;
+
+            // Points for the leg shape
+            // Top of leg (at Head)
+            const topL = { x: pts.head.x + npx * w, y: pts.head.y + npy * w }; // Outer/Left
+            const topR = { x: pts.head.x - npx * w, y: pts.head.y - npy * w }; // Inner/Right
+
+            // Taper Start (where the OUTER cut begins)
+            const taperStartDist = 60;
+            const botL = {
+                x: pts.needleTip.x - nux * taperStartDist + npx * w,
+                y: pts.needleTip.y - nuy * taperStartDist + npy * w
+            }; // Outer start of taper
+
+            const botR = {
+                x: pts.needleTip.x - nux * taperStartDist - npx * w,
+                y: pts.needleTip.y - nuy * taperStartDist - npy * w
+            }; // Inner straight continuation
+
+            // Metal Tip (End of gray leg)
+            const taperEndDist = 15;
+
+            // We want the tip to be aligned with the Inner edge (Right).
+            // So the Outer edge tapers IN.
+
+            const tipR = {
+                x: pts.needleTip.x - nux * taperEndDist - npx * w,
+                y: pts.needleTip.y - nuy * taperEndDist - npy * w
+            }; // Inner tip (Straight down from topR)
+
+            const tipL = {
+                x: pts.needleTip.x - nux * taperEndDist - npx * (w - 6),
+                y: pts.needleTip.y - nuy * taperEndDist - npy * (w - 6)
+            }; // Outer tip (Tapered in, close to Inner tip)
+
+            // Draw Leg
+            toolCtx.beginPath();
+            toolCtx.moveTo(topL.x, topL.y);
+            toolCtx.lineTo(botL.x, botL.y); // Straight outer part
+            toolCtx.lineTo(tipL.x, tipL.y); // Tapered outer edge
+            toolCtx.lineTo(tipR.x, tipR.y); // Bottom small face
+            toolCtx.lineTo(botR.x, botR.y); // Straight inner part
+            toolCtx.lineTo(topR.x, topR.y);
+            toolCtx.closePath();
+            toolCtx.fillStyle = COLORS.leg;
+            toolCtx.fill();
+
+            // Needle (Black spike)
+            toolCtx.beginPath();
+            // Align with Inner Edge (tipR)
+            // tipR is at -w (Right). tipL is at w-6 (Left).
+            // We want the tip to be at -w (Right) to align with tipR.
+            // So we shift pts.needleTip by -npx * w.
+
+            const visualTip = {
+                x: pts.needleTip.x - npx * w,
+                y: pts.needleTip.y - npy * w
+            };
+
+            toolCtx.moveTo(tipL.x, tipL.y);
+            toolCtx.lineTo(tipR.x, tipR.y);
+            toolCtx.lineTo(visualTip.x, visualTip.y);
+            toolCtx.closePath();
+            toolCtx.fillStyle = '#1e293b';
+            toolCtx.fill();
+
+            toolCtx.restore();
+
+            // --- 2. Pencil Leg (Right - Short) ---
+            toolCtx.save();
+
+            toolCtx.beginPath();
+            toolCtx.moveTo(pts.head.x, pts.head.y);
+            toolCtx.lineTo(pts.jointPos.x, pts.jointPos.y);
+            toolCtx.lineWidth = GEOMETRY.legWidth;
+            toolCtx.lineCap = 'round';
+            toolCtx.strokeStyle = COLORS.leg;
+            toolCtx.stroke();
+
+            // Joint Circle (At the end of the leg)
+            toolCtx.beginPath();
+            toolCtx.arc(pts.jointPos.x, pts.jointPos.y, 12, 0, Math.PI * 2);
+            toolCtx.fillStyle = COLORS.leg;
+            toolCtx.fill();
+
+            // Inner Joint Rivet
+            toolCtx.beginPath();
+            toolCtx.arc(pts.jointPos.x, pts.jointPos.y, 4, 0, Math.PI * 2);
+            toolCtx.fillStyle = '#334155';
+            toolCtx.fill();
+
+            toolCtx.restore();
+
+            // --- 3. Hinge (Top) ---
+            toolCtx.save();
+
+            // Tapered "Lock" Shape
+            // It sits on top of the head.
+            // It's wider at top, narrower at bottom? Or distinct shape.
+            // Reference: Dark U-shape.
+
+            toolCtx.translate(pts.head.x, pts.head.y);
+            // Rotate to align with headAngle (Up)
+            // headAngle is -PI/2 for Up.
+            // We want to draw relative to Up.
+            // If we rotate by headAngle + PI/2, then 0 is Up.
+            toolCtx.rotate(pts.headAngle + Math.PI / 2);
+
+            toolCtx.beginPath();
+            // A shape like a padlock body
+            // Center 0,0
+            toolCtx.moveTo(-12, 0);
+            toolCtx.lineTo(-12, -35); // Go up (relative to head)
+            toolCtx.quadraticCurveTo(0, -45, 12, -35); // Rounded top
+            toolCtx.lineTo(12, 0);
+            toolCtx.arc(0, 0, 12, 0, Math.PI, false); // Bottom curve
+            toolCtx.closePath();
+            toolCtx.fillStyle = COLORS.hinge;
+            toolCtx.fill();
+
+            // Handle / Knob at very top
+            toolCtx.beginPath();
+            toolCtx.rect(-6, -50, 12, 15);
+            toolCtx.fillStyle = COLORS.hinge;
+            toolCtx.fill();
+
+            // Inner Rivet
+            toolCtx.beginPath();
+            toolCtx.arc(0, -10, 5, 0, Math.PI * 2);
+            toolCtx.fillStyle = '#cbd5e1'; // Silver rivet
+            toolCtx.fill();
+
+            toolCtx.restore();
+
+            // --- 4. Pencil Holder & Pencil ---
+
+            toolCtx.save();
+
+            // We need to draw the bracket connecting Joint to Pencil
+            // The pencil is at pts.pencilTip.
+            // Let's transform to the pencil tip frame to draw the pencil and bracket easily
+
+            toolCtx.translate(pts.pencilTip.x, pts.pencilTip.y);
+            toolCtx.rotate(pts.pencilAngle - Math.PI / 2);
+            // We want +Y to be Down (along pencil).
+            // If we rotate by (pencilAngle - PI/2), then:
+            // If pencilAngle = PI/2 (Down), rot = 0. +Y is Down. Correct.
+
+            // Local Coords:
+            // 0,0 is Pencil Tip.
+            // -Y is Up (towards head).
+            // The Joint is at Y = -bracketHeight, X = -bracketWidth (approx).
+            // We calculated jointPos globally to match this.
+
+            // 1. Draw Pencil
+            // Lead
+            toolCtx.beginPath();
+            toolCtx.moveTo(-2, -4);
+            toolCtx.lineTo(2, -4);
+            toolCtx.lineTo(0, 0);
+            toolCtx.fillStyle = '#1e293b'; // Black tip
+            toolCtx.fill();
+
+            // Wood
+            toolCtx.beginPath();
+            toolCtx.moveTo(-GEOMETRY.pencilWidth / 2, -14);
+            toolCtx.lineTo(GEOMETRY.pencilWidth / 2, -14);
+            toolCtx.lineTo(0, 0);
+            toolCtx.fillStyle = COLORS.pencilWood;
+            toolCtx.fill();
+
+            // Body
+            toolCtx.beginPath();
+            toolCtx.rect(-GEOMETRY.pencilWidth / 2, -80, GEOMETRY.pencilWidth, 66);
+            toolCtx.fillStyle = COLORS.pencilBody;
+            toolCtx.fill();
+
+            // 2. Draw Bracket (Holder)
+            // Bracket connects Pencil (X=0) to Joint.
+            // Joint is at (-bracketWidth, -bracketHeight) in this frame.
+
+            const bY = -pts.bracketHeight;
+            const bW = pts.bracketWidth;
+
+            toolCtx.beginPath();
+            // Bracket arm from pencil center to left
+            toolCtx.roundRect(-bW - 10, bY - 8, bW + 10 + GEOMETRY.pencilWidth / 2, 16, 4);
+            toolCtx.fillStyle = '#cbd5e1'; // Gray bracket
+            toolCtx.fill();
+
+            // Rivet on the bracket (at the joint)
+            // This should overlay the leg joint perfectly
+            toolCtx.beginPath();
+            toolCtx.arc(-bW, bY, 4, 0, Math.PI * 2);
+            toolCtx.fillStyle = '#334155';
+            toolCtx.fill();
+
+            toolCtx.restore();
+        }
+
+        // --- INTERACTION ---
+
+        function getMousePos(e) {
+            const rect = toolCanvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            return {
+                x: clientX - rect.left,
+                y: clientY - rect.top
+            };
+        }
+
+        function hitTest(pos) {
+            const pts = getCompassPoints();
+
+            // 1. Draw (Pencil Tip)
+            if (dist(pos, pts.pencilTip) < GEOMETRY.pencilHitRadius) return 'DRAW';
+
+            // 2. Resize (Pencil Body)
+            if (dist(pos, pts.pencilBodyPos) < GEOMETRY.pencilBodyHitRadius) return 'RESIZE';
+
+            // 3. Move (Hinge or Pivot)
+            if (dist(pos, pts.head) < GEOMETRY.moveHitRadius) return 'MOVE';
+            if (dist(pos, pts.needleTip) < GEOMETRY.moveHitRadius) return 'MOVE';
+
+            // 4. Rotate (Legs)
+            if (dist(pos, pts.midPencilLeg) < 40) return 'ROTATE';
+            if (dist(pos, pts.midNeedleLeg) < 40) return 'ROTATE'; // Allow rotating by dragging needle leg too? usually moves. Let's keep needle leg for move?
+            // Actually, dragging the non-pivot leg usually rotates.
+
+            return null;
+        }
+
+        function handleStart(e) {
+            const pos = getMousePos(e);
+            const mode = hitTest(pos);
+
+            if (!mode) return;
+
+            interaction.mode = mode;
+            interaction.startPos = pos;
+            interaction.startCompass = { ...compass };
+            interaction.lastDrawAngle = compass.angle;
+
+            document.getElementById('instructions').style.opacity = 0;
+
+            if (mode === 'DRAW') toolCanvas.classList.add('cursor-draw');
+            else if (mode === 'MOVE') toolCanvas.classList.add('cursor-move');
+            else if (mode === 'RESIZE') toolCanvas.classList.add('cursor-resize');
+            else if (mode === 'ROTATE') toolCanvas.classList.add('cursor-move');
+
+            if (mode === 'DRAW') compass.isDrawing = true;
+        }
+
+        function handleMove(e) {
+            const pos = getMousePos(e);
+
+            if (!interaction.mode) {
+                const hoverMode = hitTest(pos);
+                toolCanvas.className = '';
+                if (hoverMode === 'DRAW') toolCanvas.classList.add('cursor-pointer');
+                else if (hoverMode === 'MOVE') toolCanvas.classList.add('cursor-move');
+                else if (hoverMode === 'RESIZE') toolCanvas.classList.add('cursor-resize');
+                else if (hoverMode === 'ROTATE') toolCanvas.classList.add('cursor-move');
+                return;
+            }
+
+            e.preventDefault();
+
+            if (interaction.mode === 'MOVE') {
+                const dx = pos.x - interaction.startPos.x;
+                const dy = pos.y - interaction.startPos.y;
+                compass.x = interaction.startCompass.x + dx;
+                compass.y = interaction.startCompass.y + dy;
+            }
+            else if (interaction.mode === 'RESIZE') {
+                // Dragging pencil body in/out
+                const d = dist(pos, { x: compass.x, y: compass.y });
+                compass.radius = Math.max(50, Math.min(400, d));
+
+                // Also update angle
+                const dx = pos.x - compass.x;
+                const dy = pos.y - compass.y;
+                compass.angle = Math.atan2(dy, dx);
+            }
+            else if (interaction.mode === 'ROTATE') {
+                const dx = pos.x - compass.x;
+                const dy = pos.y - compass.y;
+                compass.angle = Math.atan2(dy, dx);
+            }
+            else if (interaction.mode === 'DRAW') {
+                const dx = pos.x - compass.x;
+                const dy = pos.y - compass.y;
+                const newAngle = Math.atan2(dy, dx);
+
+                let diff = newAngle - interaction.lastDrawAngle;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+                while (diff < -Math.PI) diff += Math.PI * 2;
+
+                if (Math.abs(diff) > 0.001) {
+                    inkCtx.beginPath();
+                    const counterClockwise = diff < 0;
+                    inkCtx.arc(compass.x, compass.y, compass.radius, interaction.lastDrawAngle, newAngle, counterClockwise);
+                    inkCtx.strokeStyle = compass.penColor;
+                    inkCtx.lineWidth = 3;
+                    inkCtx.stroke();
+
+                    interaction.lastDrawAngle = newAngle;
+                }
+                compass.angle = newAngle;
+            }
+
+            renderTool();
+        }
+
+        function handleEnd() {
+            interaction.mode = null;
+            compass.isDrawing = false;
+            toolCanvas.className = '';
+            renderTool();
+        }
+
+        // --- EVENT LISTENERS ---
+        toolCanvas.addEventListener('mousedown', handleStart);
+        window.addEventListener('mousemove', handleMove);
+        window.addEventListener('mouseup', handleEnd);
+
+        toolCanvas.addEventListener('touchstart', (e) => { handleStart(e); }, { passive: false });
+        window.addEventListener('touchmove', (e) => { handleMove(e); }, { passive: false });
+        window.addEventListener('touchend', (e) => { handleEnd(e); }, { passive: false });
+
+        // UI Helper
+        function setPenColor(el, color) {
+            compass.penColor = color;
+            // Update pencil body color too? No, usually pencil body stays same, lead changes.
+            // But in the screenshot, the pencil is red. Let's assume it matches ink.
+            COLORS.pencilBody = color;
+            COLORS.pencilLead = color;
+
+            document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+            el.classList.add('active');
+            renderTool();
+        }
+
+        // Start
+        init();
+
+    </script>
+</body>
+
+</html>
