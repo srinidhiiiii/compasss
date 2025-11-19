@@ -172,7 +172,7 @@
             x: 0,
             y: 0,
             radius: 150,
-            angle: -Math.PI / 2, // Start Upright
+            angle: 0, // Vertical standing position
             penColor: '#be185d', // Default to the red color
             isDrawing: false
         };
@@ -216,7 +216,7 @@
             compass.x = width / 2 - 75;
             compass.y = height / 2;
             compass.radius = 150;
-            compass.angle = -Math.PI / 2;
+            compass.angle = 0; // Vertical standing position
             renderTool();
         }
 
@@ -457,7 +457,8 @@
 
             // Handle / Knob at very top
             toolCtx.beginPath();
-            toolCtx.rect(-6, -50, 12, 15);
+            //toolCtx.rect(-6, -50, 12, 15);
+            toolCtx.roundRect(-6, -60, 12, 25, [6, 6, 0, 0]);
             toolCtx.fillStyle = COLORS.hinge;
             toolCtx.fill();
 
@@ -490,20 +491,20 @@
             // We calculated jointPos globally to match this.
 
             // 1. Draw Pencil
-            // Lead
-            toolCtx.beginPath();
-            toolCtx.moveTo(-2, -4);
-            toolCtx.lineTo(2, -4);
-            toolCtx.lineTo(0, 0);
-            toolCtx.fillStyle = '#1e293b'; // Black tip
-            toolCtx.fill();
-
-            // Wood
+            // Wood (draw first)
             toolCtx.beginPath();
             toolCtx.moveTo(-GEOMETRY.pencilWidth / 2, -14);
             toolCtx.lineTo(GEOMETRY.pencilWidth / 2, -14);
             toolCtx.lineTo(0, 0);
             toolCtx.fillStyle = COLORS.pencilWood;
+            toolCtx.fill();
+
+            // Lead (draw on top so it's visible)
+            toolCtx.beginPath();
+            toolCtx.moveTo(-2, -4);
+            toolCtx.lineTo(2, -4);
+            toolCtx.lineTo(0, 0);
+            toolCtx.fillStyle = '#1e293b'; // Black tip
             toolCtx.fill();
 
             // Body
