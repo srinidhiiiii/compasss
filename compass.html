@@ -557,14 +557,15 @@
             // 2. Resize (Pencil Body)
             if (dist(pos, pts.pencilBodyPos) < GEOMETRY.pencilBodyHitRadius) return 'RESIZE';
 
-            // 3. Move (Hinge or Pivot)
+            // 3. Move (Hinge, Pivot, or Legs)
             if (dist(pos, pts.head) < GEOMETRY.moveHitRadius) return 'MOVE';
             if (dist(pos, pts.needleTip) < GEOMETRY.moveHitRadius) return 'MOVE';
 
-            // 4. Rotate (Legs)
-            if (dist(pos, pts.midPencilLeg) < 40) return 'ROTATE';
-            if (dist(pos, pts.midNeedleLeg) < 40) return 'ROTATE'; // Allow rotating by dragging needle leg too? usually moves. Let's keep needle leg for move?
-            // Actually, dragging the non-pivot leg usually rotates.
+            // Move when clicking on leg midpoints (not rotate)
+            if (dist(pos, pts.midPencilLeg) < 40) return 'MOVE';
+            if (dist(pos, pts.midNeedleLeg) < 40) return 'MOVE';
+
+            // 4. Rotate is now only via pencil body (RESIZE handles rotation too)
 
             return null;
         }
